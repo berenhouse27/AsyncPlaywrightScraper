@@ -1,0 +1,273 @@
+
+This program crawls/scrapes google news and a company's homepage for links using a list of keywords and search terms
+Uses playwright for asynchronous browsing
+
+
+SCRAPERS:
+    Homepage Scraper: Begins at company homepage and uses keywords/search terms to crawl across multiple site locations
+    News Scraper: Scrapes Google News RSS
+
+
+DEFINITIONS:
+    "Keywords": List of pre-set terms to determine whether a link is relevant
+                ex) "News", "Blog", "Investor-Relations"
+    "Relevant": A link likely to contain more relevant links or results
+                ex) https://news.lenovo.com
+    "Search Terms": List of terms to determine whether a link is a result
+                ex) "second quarter", "data leak", "NASA"
+    "Result": A link likely to contain information related to search terms
+                ex) https://news.lenovo.com/article-with-search-terms-included
+
+
+
+FILES:
+    BrowserHandler:
+        - BrowserHandler: Class for handling playwright browser
+
+    HomepageScraper:
+        - normalize_url(url: str): Function to standardize links for comparison and avoid duplicate URLs
+        - strip_common_path(source_url: str, target_url: str): Function to remove common path from target_url based on source_url
+            - Needed if source path contains a keyword
+            - ex) If "news" is a keyword, every single link in the domain https://news.lenovo.com/ will falsely be considered relevant
+        - CrawlResult: Dataclass for packaging individual crawl results
+        - HomepageScraper: Class for scraping/crawling homepage
+
+    NewsScraper:
+        - SnippetStripper: Class for stripping links
+        - strip_html_snippet(html_snippet: str): Function using SnippetStripper to remove HTML tags and return visible text content
+        - NewsScraper: Class for scraping Google News RSS
+
+    ScraperHandler:
+        - ScraperHandler: Class to manage feeding inputs to and retrieving results from both scrapers
+
+    GUI:
+        - ScraperGUI: Class for managing a GUI and displaying results
+
+    Logger (Only for debugging):
+        - DualLogger: Class for creating an output log of crawl
+        - enable_serialized_logging(): Function to allow serialized logging by redirecting output to custom logger
+
+
+CLASS DETAILS:
+    - BrowserHandler
+        - PURPOSE: Manage playwright browser activities such as opening a page or extracting content
+        - METHODS:
+            - BrowserHandler.start()
+                - Open new browser
+                - Block heavy resources such as images or fonts from loading
+            - BrowserHandler.stop()
+                - Close browser
+                - Clean up resources
+            - BrowserHandler.get_page()
+                - Returns new browser page
+            - BrowserHandler.get_page_content()
+                - Open URL and wait for link elements to load
+                - Return full HTML content from page
+                - If page fails to load while headless, retry with headless=False
+            - BrowserHandler.reset_headless()
+                - Reset headless status back to original assignment
+            - BrowserHandler._block_heavy_resources()
+                - Internal method
+                - Abort request for heavy resources like images
+            - BrowserHandler._apply_stealth()
+                - Internal method
+                - Avoid basic bot detection
+                - Active by default
+                    - Can be turned off by setting BrowserHandler.stealth=False
+
+    - CrawlResult
+        - PURPOSE: Package data associated with results to easily access later
+
+    - HomepageScraper
+        - PURPOSE: Scrape a company's website for links related to search terms
+        - METHODS:
+            - HomepageScraper.update_search_terms(search_terms: list[str]) -> None
+                - Replace current list of search terms with new one
+            - HomepageScraper.reset_search() -> None
+                - Clear current homepage, search_terms, and any seen/processed links
+            - HomepageScraper.find_company_homepage(company: str) -> str | None
+                - Use BraveAPI to find company homepage based on name
+                - Return company homepage link
+            - HomepageScraper._scrape_for_links(start_url: str = None) -> tuple[str, dict[str, str]] | None
+                - Internal method
+                - Load page and extract all navigable links
+                - Return tuple with the starting url and a dictionary associating each found url with it's anchor text
+            - HomepageScraper._process_links(links: tuple[str, dict[str, str]]) -> tuple[list[str], list[CrawlResult]]
+                - Internal method
+                - Analyze links for relevance or for results
+                - Uses functions is_article(), is_relevant(), and is_result() to determine if a link is relevant or a result
+                - Return a tuple containing relevant links to continue crawling with and results with matched search terms
+            - HomepageScraper.crawl(max_tabs: int = 10) -> None
+                - Handles calling _scrape_for_links and _process_links
+                - Begins crawling homepage, adding relevant links to the queue as they are found and storing results
+                - Accept integer to change the number of tabs able to be concurrently open
+                    -  Set to open a maximum of 10 concurrent links by default
+                - Conclude crawling when there are no more links left in queue
+
+    - NewsScraper
+        - PURPOSE: Scrape Google News RSS for results related to search terms
+        - METHODS:
+            - NewsScraper._create_query(company: str, search_terms: list[str] = None) -> str
+                - Internal method
+                - Create a Google News search query using logical AND
+            - NewsScraper._build_rss_url(company: str, search_terms: list[str] = None) -> str
+                - Internal method
+                - Creates a formatted Google News RSS URL
+            - NewsScraper._parse_feed(feed, max_results: int) -> list[dict]
+                - Internal method
+                - Parse entries from an RSS feed
+                - Return list of dicts with an entries title, link, and snippet
+            - NewsScraper.perform_search(company: str, search_terms: list[str], max_results: int = 10) -> list[dict]
+                - Runs previous methods to build query and RSS URL, and then parse the feed
+                - Return list of dicts with titles, links, and snippets
+                - Accept integer to change the maximum number of results returned
+                    - Returns a max of 10 results by default
+
+    - ScraperHandler
+        - PURPOSE: Manage scrapers and fetch results for passing to GUI
+        - METHODS:
+            - ScraperHandler.retrieve_company(company: str) -> None
+                - Store name of company in object variable
+            - ScraperHandler.retrieve_search_terms(search_terms: list[str]) -> None
+                - Store search terms in object variable
+            - ScraperHandler.run_news_scrape() -> list[dict]
+                - Run the news scraper
+                - Return list of dictionaries with results
+            - ScraperHandler.run_find_homepage() -> str
+                - Run only the find_company_homepage method from homepage scraper
+                - Return homepage link
+            - ScraperHandler.run_company_scrape() -> tuple[str, list[CrawlResult]] | None
+                - Run full homepage scraper
+                - Return homepage and list of results
+
+
+CLASS PARAMETERS:
+    BrowserHandler(headless: bool = True, stealth: bool = True, DEBUG: bool = False)
+        - headless = Set whether playwright creates a visible browser instance
+        - stealth = Set whether playwright uses anti-bot detection
+        - DEBUG = Set whether debug statements print
+
+    CrawlResult(url: str, text: str, matched_terms: list[str])
+        - url = URL of result page
+        - text = Any text associated with URL
+        - matched_terms = Any search terms used to find it
+
+    HomepageScraper(api_key: str, search_terms: list[str], whitelist_keywords: list[str] = default_whitelist, blacklist_keywords: list[str] = default_blacklist,
+                    max_depth: int = 3, headless: bool, stealth: bool = True, DEBUG: bool = False)
+        - api_key = API Key for BraveAPI
+        - search_terms = Terms to find results with
+        - whitelist_keywords = REGEX patterns to find relevant links with (if none given, use default whitelist)
+        - blacklist_keywords = REGEX patterns to avoid in links (if none given, use default blacklist)
+        - max_depth = The max possible link depth before ending
+        - headless = Set whether playwright browser is headless
+        - stealth = Set whether playwright uses anti-bot detection
+        - DEBUG = Set whether debug statements print
+
+    NewsScraper(DEBUG: bool = False):
+        - DEBUG = Set whether debug statements print
+
+    ScraperHandler(whitelist_keywords: list[str] = None, blacklist_keywords: list[str] = None,
+                   max_depth: int = 3, headless: bool = True, stealth: bool = True, DEBUG = False)
+        - whitelist_keywords = REGEX patterns to find relevant links with
+        - blacklist_keywords = REGEX patterns to avoid in links
+        - max_depth = Maximum link depth to crawl
+        - headless = Set whether playwright browser is headless
+        - stealth = Set whether playwright uses anti-bot detection
+        - DEBUG = set whether debug statements print
+
+    ScraperGUI(whitelist: list[str] = None, blacklist: list[str]= None,
+               headless: bool = True, stealth: bool = True, DEBUG: bool = False)
+        - whitelist = REGEX patterns to find relevant links with
+        - blacklist = REGEX patterns to avoid in links
+        - headless = Set whether playwright browser is headless
+        - stealth = Set whether playwright uses anti-bot detection
+        - DEBUG = Set whether debug statements print
+
+
+WORKFLOW OVERVIEW:
+    1) [ScraperHandler] Accept inputs for company name and (optionally) a list of search terms
+    2) [NewsScraper] Create Google News RSS query
+    3) [NewsScraper] Parse news entries for relevance
+    2) [NewsScraper] Return news links
+    3) [HomepageScraper] Find company homepage
+    4) [HomepageScraper] Begin crawling
+        5) [HomepageScraper] Initialize queue with homepage and depth 0
+        6) [HomepageScraper] Concurrently open links from queue up to a set max (default = 10 links at once)
+            7) [HomepageScraper] Collect all possible links
+            8) [HomepageScraper] Process links, checking for relevance or for results
+            9) [HomepageScraper] Store result links together
+            10) [HomepageScraper] Add any new, relevant links back to queue (incrementing depth)
+            11) [HomepageScraper] Repeat 6-10 until queue is empty
+    10) [ScraperHandler] Return all results
+
+
+PACKAGES / DEPENDENCIES:
+     NewsScraper:
+        - html.parser
+            - HTMLParser
+        - feedparser
+    BrowserHandler:
+        - asyncio
+        - playwright.async_api
+            - async_playwright
+    HomepageScraper:
+        - re
+        - urllib.parse
+            - urlparse
+            - urljoin
+            - urlunparse
+            - unquote
+        - rapidfuzz
+            - fuzz
+        - bs4
+            - BeautifulSoup
+        - requests
+        - requests.adapters
+            - HTTPAdapter
+            - Retry
+        - dataclasses
+            - dataclass
+        - tldextract
+        - lxml
+        - asyncio
+        - BrowserHandler
+    ScraperHandler:
+        - asyncio
+        - NewsScraper
+        - HomepageScraper
+    ScraperGUI:
+        - tkinter
+        - webbrowser
+        - threading
+        - asyncio
+        - ScraperHandler
+
+
+POSSIBLE ENHANCEMENTS:
+    1. Enhance anti-bot detection for HomepageScraper
+        - Spoof fingerprint
+        - Rotate proxies/IP
+        - Reduce resource blocking?
+        - Randomized mouse movements/inputs?
+    2. Retrieve social media posts from company accounts as results
+        - Sometimes possible depending on social media platform
+        - Often requires API
+        - Social Media platforms often have anti-bot detection
+    3. Improve link detection/categorization
+        - Refine whitelisted and blacklisted REGEX patterns
+        - Refine comparison functions
+        - Storing base domains for filtering out keywords before processing relevance?
+            - ex) storing news.lenovo.com in order to filter it out of news.lenovo.com/random-article-title
+            - Helps avoid false positives for relevance
+    4. Increase link coverage
+        - Not all link types are retrieved by Playwright
+    5. Analyze result pages for whether they are actually useful results
+        - Scrape page content for search terms?
+    6. Expand news coverage beyond just Google News RSS
+        - May require additional APIs
+    7. Increase scraping efficiency
+        - Sometimes slower to scrape some sites or gets stuck
+    8. Caching search results
+        - Avoid repeatedly processing links day over day which do not need to be processed
+        - Create class for storing results long term?
+BSAKe9yRx_jPam-h0rz1YvotUkSjIDY
